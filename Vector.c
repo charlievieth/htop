@@ -311,21 +311,6 @@ void Vector_add(Vector* this, void* data_) {
    assert(Vector_isConsistent(this));
 }
 
-int Vector_indexOf(const Vector* this, const void* search_, Object_Compare compare) {
-   const Object* search = search_;
-   assert(Object_isA(search, this->type));
-   assert(compare);
-   assert(Vector_isConsistent(this));
-   for (int i = 0; i < this->items; i++) {
-      const Object* o = this->array[i];
-      assert(o);
-      if (compare(search, o) == 0) {
-         return i;
-      }
-   }
-   return -1;
-}
-
 void Vector_splice(Vector* this, Vector* from) {
    assert(Vector_isConsistent(this));
    assert(Vector_isConsistent(from));

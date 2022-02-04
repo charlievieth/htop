@@ -393,8 +393,6 @@ bool Process_changePriorityBy(Process* this, Arg delta);
 
 bool Process_sendSignal(Process* this, Arg sgn);
 
-int Process_pidCompare(const void* v1, const void* v2);
-
 int Process_compareByKey_Base(const Process* p1, const Process* p2, ProcessField key);
 
 // Avoid direct calls, use Process_getCommand instead

@@ -152,8 +152,22 @@ void ProcessList_printHeader(const ProcessList* this, RichString* header) {
    }
 }
 
+static inline int ProcessList_indexOf(const ProcessList* this, const Process* p) {
+   const Vector* procs = this->processes;
+   int size = Vector_size(procs);
+
+   for (int i = 0; i < size; i++) {
+      Process* pp = (Process*)Vector_get(procs, i);
+      if (pp->pid == p->pid) {
+         return i;
+      }
+   }
+
+   return -1;
+}
+
 void ProcessList_add(ProcessList* this, Process* p) {
-   assert(Vector_indexOf(this->processes, p, Process_pidCompare) == -1);
+   assert(ProcessList_indexOf(this, p) == -1);
    assert(Hashtable_get(this->processTable, p->pid) == NULL);
    p->processList = this;
 
@@ -163,22 +177,20 @@ void ProcessList_add(ProcessList* this, Process* p) {
    Vector_add(this->processes, p);
    Hashtable_put(this->processTable, p->pid, p);
 
-   assert(Vector_indexOf(this->processes, p, Process_pidCompare) != -1);
+   assert(ProcessList_indexOf(this, p) != -1);
    assert(Hashtable_get(this->processTable, p->pid) != NULL);
    assert(Hashtable_count(this->processTable) == Vector_count(this->processes));
 }
 
-void ProcessList_remove(ProcessList* this, const Process* p) {
-   assert(Vector_indexOf(this->processes, p, Process_pidCompare) != -1);
-   assert(Hashtable_get(this->processTable, p->pid) != NULL);
-
-   const Process* pp = Hashtable_remove(this->processTable, p->pid);
-   assert(pp == p); (void)pp;
-
+static void ProcessList_removeIndex(ProcessList* this, const Process* p, int idx) {
    pid_t pid = p->pid;
-   int idx = Vector_indexOf(this->processes, p, Process_pidCompare);
-   assert(idx != -1);
 
+   #define PPid(_p) (_p ? ((Process*)_p)->pid : -1)
+   assert(PPid(Vector_get(this->processes, idx)) == pid);
+   assert(PPid(Hashtable_get(this->processTable, pid)) == pid);
+   #undef PPid
+
+   Hashtable_remove(this->processTable, pid);
    if (idx >= 0) {
       Vector_remove(this->processes, idx);
    }
@@ -190,6 +202,10 @@ void ProcessList_remove(ProcessList* this, const Process* p) {
 
    assert(Hashtable_get(this->processTable, pid) == NULL);
    assert(Hashtable_count(this->processTable) == Vector_count(this->processes));
+}
+
+void ProcessList_remove(ProcessList* this, const Process* p) {
+   ProcessList_removeIndex(this, p, ProcessList_indexOf(this, p));
 }
 
 // ProcessList_updateTreeSetLayer sorts this->displayTreeSet,
@@ -590,7 +606,7 @@ Process* ProcessList_getProcess(ProcessList* this, pid_t pid, bool* preExisting,
    Process* proc = (Process*) Hashtable_get(this->processTable, pid);
    *preExisting = proc != NULL;
    if (proc) {
-      assert(Vector_indexOf(this->processes, proc, Process_pidCompare) != -1);
+      assert(ProcessList_indexOf(this, proc) != -1);
       assert(proc->pid == pid);
    } else {
       proc = constructor(this->settings);
@@ -644,7 +660,7 @@ void ProcessList_scan(ProcessList* this, bool pauseProcessUpdate) {
       if (p->tombStampMs > 0) {
          // remove tombed process
          if (this->monotonicMs >= p->tombStampMs) {
-            ProcessList_remove(this, p);
+            ProcessList_removeIndex(this, p, i);
          }
       } else if (p->updated == false) {
          // process no longer exists
@@ -653,7 +669,7 @@ void ProcessList_scan(ProcessList* this, bool pauseProcessUpdate) {
             p->tombStampMs = this->monotonicMs + 1000 * this->settings->highlightDelaySecs;
          } else {
             // immediately remove
-            ProcessList_remove(this, p);
+            ProcessList_removeIndex(this, p, i);
          }
       }
    }

@@ -74,8 +74,6 @@ static inline const ObjectClass* Vector_type(const Vector* this) {
 
 void Vector_add(Vector* this, void* data_);
 
-int Vector_indexOf(const Vector* this, const void* search_, Object_Compare compare);
-
 void Vector_splice(Vector* this, Vector* from);
 
 #endif
