@@ -306,15 +306,8 @@ void DarwinProcess_setFromKInfoProc(Process* proc, const struct kinfo_proc* ps, 
       proc->isKernelThread = false;
       proc->isUserlandThread = false;
       dp->translated = ps->kp_proc.p_flag & P_TRANSLATED;
-
       proc->tty_nr = ps->kp_eproc.e_tdev;
-      const char* name = (ps->kp_eproc.e_tdev != NODEV) ? devname(ps->kp_eproc.e_tdev, S_IFCHR) : NULL;
-      if (!name) {
-         free(proc->tty_name);
-         proc->tty_name = NULL;
-      } else {
-         free_and_xStrdup(&proc->tty_name, name);
-      }
+      proc->tty_name = NULL;
 
       proc->starttime_ctime = ep->p_starttime.tv_sec;
       Process_fillStarttimeBuffer(proc);
@@ -324,6 +317,25 @@ void DarwinProcess_setFromKInfoProc(Process* proc, const struct kinfo_proc* ps, 
 
       if (proc->settings->flags & PROCESS_FLAG_CWD) {
          DarwinProcess_updateCwd(ep->p_pid, proc);
+      }
+   }
+
+   if (proc->tty_name == NULL && (dev_t)proc->tty_nr != NODEV) {
+      /* The call to devname() is extremely expensive (due to lstat)
+       * and represents ~95% of htop's CPU usage when there is high
+       * process turnover.
+       *
+       * To mitigate this we only fetch TTY information if the TTY
+       * field is enabled in the settings.
+       */
+      if (Settings_hasField(proc->settings, TTY)) {
+         const char *name = devname(proc->tty_nr, S_IFCHR);
+         if (name) {
+            proc->tty_name = xStrndup(name, 512);
+         } else {
+            /* devname failed: prevent us from calling it again */
+            proc->tty_nr = NODEV;
+         }
       }
    }
 

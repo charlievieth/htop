@@ -630,3 +630,15 @@ void Settings_setHeaderLayout(Settings* this, HeaderLayout hLayout) {
    this->hLayout = hLayout;
    this->changed = true;
 }
+
+bool Settings_hasField(const Settings* this, ProcessField field) {
+   const ProcessField* fields = this->fields;
+   if (fields) {
+      while (*fields) {
+         if (*fields++ == field) {
+            return true;
+         }
+      }
+   }
+   return false;
+}

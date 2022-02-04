@@ -111,4 +111,6 @@ bool Settings_isReadonly(void);
 
 void Settings_setHeaderLayout(Settings* this, HeaderLayout hLayout);
 
+bool Settings_hasField(const Settings* this, ProcessField field);
+
 #endif
