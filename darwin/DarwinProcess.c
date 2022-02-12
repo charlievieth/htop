@@ -11,10 +11,12 @@ in the source distribution for its full text.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <assert.h>
 #include <mach/mach.h>
 
 #include "CRT.h"
 #include "Process.h"
+#include "Macros.h"
 #include "darwin/Platform.h"
 
 
@@ -127,28 +129,48 @@ static void DarwinProcess_updateCwd(pid_t pid, Process* proc) {
    free_and_xStrdup(&proc->procCwd, vpi.pvi_cdir.vip_path);
 }
 
+/* The size of kern.argmax is constant and kinda large (1Mb)
+   so we cache it's size and re-use the buffer since this is
+   called for each process each time we update the process
+   list. */
+static char* cmd_line_buffer = NULL;
+static size_t cmd_line_buffer_size;
+
+/* DarwinProcess_initCmdLineBuffer initializes the command line
+   buffer and is marked as "cold" as it should only be called
+   once. */
+static ATTR_COLD void DarwinProcess_initCmdLineBuffer() {
+   assert(!cmd_line_buffer);
+   int mib[2] = { CTL_KERN, KERN_ARGMAX };
+   int argmax;
+   size_t size = sizeof(argmax);
+   if (sysctl(mib, 2, &argmax, &size, NULL, 0) == -1) {
+      assert(false);
+      argmax = 1048576; /* default for macOS 12.1 */
+   }
+   cmd_line_buffer = xMalloc(argmax);
+   cmd_line_buffer_size = argmax;
+}
+
+static size_t DarwinProcess_getCmdLineBuffer(char** procargs) {
+   if (!cmd_line_buffer) {
+      DarwinProcess_initCmdLineBuffer();
+      assert(cmd_line_buffer);
+   }
+
+   *procargs = cmd_line_buffer;
+   size_t size = cmd_line_buffer_size;
+   /* make sure size is in some sane range */
+   assert(4096 <= cmd_line_buffer_size);
+   assert(cmd_line_buffer_size <= 1024 * 1024 * 64);
+
+   return size;
+}
+
 static void DarwinProcess_updateCmdLine(const struct kinfo_proc* k, Process* proc) {
    Process_updateComm(proc, k->kp_proc.p_comm);
 
    /* This function is from the old Mac version of htop. Originally from ps? */
-   int mib[3], argmax, nargs, c = 0;
-   size_t size;
-   char *procargs, *sp, *np, *cp;
-
-   /* Get the maximum process arguments size. */
-   mib[0] = CTL_KERN;
-   mib[1] = KERN_ARGMAX;
-
-   size = sizeof( argmax );
-   if ( sysctl( mib, 2, &argmax, &size, NULL, 0 ) == -1 ) {
-      goto ERROR_A;
-   }
-
-   /* Allocate space for the arguments. */
-   procargs = (char*)malloc(argmax);
-   if ( procargs == NULL ) {
-      goto ERROR_A;
-   }
 
    /*
     * Make a sysctl() call to get the raw argument space of the process.
@@ -191,44 +213,48 @@ static void DarwinProcess_updateCmdLine(const struct kinfo_proc* k, Process* pro
     * :               :
     * \---------------/ 0xffffffff
     */
-   mib[0] = CTL_KERN;
-   mib[1] = KERN_PROCARGS2;
-   mib[2] = k->kp_proc.p_pid;
+   char *procargs;
+   size_t size = DarwinProcess_getCmdLineBuffer(&procargs);
 
-   size = ( size_t ) argmax;
+   int mib[3] = { CTL_KERN, KERN_PROCARGS2, k->kp_proc.p_pid };
    if ( sysctl( mib, 3, procargs, &size, NULL, 0 ) == -1 ) {
-      goto ERROR_B;
+      goto ERROR;
    }
 
+   int nargs;
    memcpy( &nargs, procargs, sizeof( nargs ) );
-   cp = procargs + sizeof( nargs );
+   char* cp = procargs + sizeof( nargs );
+
+   const char *ep = &procargs[size];
 
    /* Skip the saved exec_path. */
-   for ( ; cp < &procargs[size]; cp++ ) {
+   for ( ; cp < ep; cp++ ) {
       if ( *cp == '\0' ) {
          /* End of exec_path reached. */
          break;
       }
    }
-   if ( cp == &procargs[size] ) {
-      goto ERROR_B;
+   if ( cp == ep ) {
+      goto ERROR;
    }
 
    /* Skip trailing '\0' characters. */
-   for ( ; cp < &procargs[size]; cp++ ) {
+   for ( ; cp < ep; cp++ ) {
       if ( *cp != '\0' ) {
          /* Beginning of first argument reached. */
          break;
       }
    }
-   if ( cp == &procargs[size] ) {
-      goto ERROR_B;
+   if ( cp == ep ) {
+      goto ERROR;
    }
    /* Save where the argv[0] string starts. */
-   sp = cp;
+   const char* sp = cp;
 
    int end = 0;
-   for ( np = NULL; c < nargs && cp < &procargs[size]; cp++ ) {
+   int c = 0;
+   char *np;
+   for ( np = NULL; c < nargs && cp < ep; cp++ ) {
       if ( *cp == '\0' ) {
          c++;
          if ( np != NULL ) {
@@ -249,7 +275,7 @@ static void DarwinProcess_updateCmdLine(const struct kinfo_proc* k, Process* pro
     */
    if ( np == NULL || np == sp ) {
       /* Empty or unterminated string. */
-      goto ERROR_B;
+      goto ERROR;
    }
    if (end == 0) {
       end = np - sp;
@@ -257,15 +283,9 @@ static void DarwinProcess_updateCmdLine(const struct kinfo_proc* k, Process* pro
 
    Process_updateCmdline(proc, sp, 0, end);
 
-   /* Clean up. */
-   free( procargs );
-
    return;
 
-ERROR_B:
-   free( procargs );
-
-ERROR_A:
+ERROR:
    Process_updateCmdline(proc, k->kp_proc.p_comm, 0, strlen(k->kp_proc.p_comm));
 }
 

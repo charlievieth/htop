@@ -38,6 +38,7 @@
 #define ATTR_NORETURN                   __attribute__((noreturn))
 #define ATTR_UNUSED                     __attribute__((unused))
 #define ATTR_MALLOC                     __attribute__((malloc))
+#define ATTR_COLD                       __attribute__((cold))
 
 #else /* __GNUC__ */
 
@@ -46,6 +47,7 @@
 #define ATTR_NORETURN
 #define ATTR_UNUSED
 #define ATTR_MALLOC
+#define ATTR_COLD
 
 #endif /* __GNUC__ */
 
