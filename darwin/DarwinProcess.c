@@ -129,18 +129,15 @@ static void DarwinProcess_updateCwd(pid_t pid, Process* proc) {
    free_and_xStrdup(&proc->procCwd, vpi.pvi_cdir.vip_path);
 }
 
-/* The size of kern.argmax is constant and kinda large (1Mb)
-   so we cache it's size and re-use the buffer since this is
-   called for each process each time we update the process
-   list. */
-static char* cmd_line_buffer = NULL;
-static size_t cmd_line_buffer_size;
+/* cmd_line_buffer_size stores the result of `sysctl kern.argmax` */
+static size_t cmd_line_buffer_size = (size_t)-1;
 
-/* DarwinProcess_initCmdLineBuffer initializes the command line
-   buffer and is marked as "cold" as it should only be called
-   once. */
-static ATTR_COLD void DarwinProcess_initCmdLineBuffer() {
-   assert(!cmd_line_buffer);
+/* DarwinProcess_initCmdLineBufferSize fetches and catches the
+   result of `sysctl kern.argmax` and is marked as "cold" as it
+   should only be called once. */
+static ATTR_COLD void DarwinProcess_initCmdLineBufferSize() {
+   assert(cmd_line_buffer_size == (size_t)-1);
+
    int mib[2] = { CTL_KERN, KERN_ARGMAX };
    int argmax;
    size_t size = sizeof(argmax);
@@ -148,23 +145,18 @@ static ATTR_COLD void DarwinProcess_initCmdLineBuffer() {
       assert(false);
       argmax = 1048576; /* default for macOS 12.1 */
    }
-   cmd_line_buffer = xMalloc(argmax);
    cmd_line_buffer_size = argmax;
-}
 
-static size_t DarwinProcess_getCmdLineBuffer(char** procargs) {
-   if (!cmd_line_buffer) {
-      DarwinProcess_initCmdLineBuffer();
-      assert(cmd_line_buffer);
-   }
-
-   *procargs = cmd_line_buffer;
-   size_t size = cmd_line_buffer_size;
    /* make sure size is in some sane range */
    assert(4096 <= cmd_line_buffer_size);
    assert(cmd_line_buffer_size <= 1024 * 1024 * 64);
+}
 
-   return size;
+static size_t DarwinProcess_getCmdLineBufferSize() {
+   if (cmd_line_buffer_size == (size_t)-1) {
+      DarwinProcess_initCmdLineBufferSize();
+   }
+   return cmd_line_buffer_size;
 }
 
 static void DarwinProcess_updateCmdLine(const struct kinfo_proc* k, Process* proc) {
@@ -213,8 +205,8 @@ static void DarwinProcess_updateCmdLine(const struct kinfo_proc* k, Process* pro
     * :               :
     * \---------------/ 0xffffffff
     */
-   char *procargs;
-   size_t size = DarwinProcess_getCmdLineBuffer(&procargs);
+   size_t size = DarwinProcess_getCmdLineBufferSize();
+   char *procargs = xMalloc(size);
 
    int mib[3] = { CTL_KERN, KERN_PROCARGS2, k->kp_proc.p_pid };
    if ( sysctl( mib, 3, procargs, &size, NULL, 0 ) == -1 ) {
@@ -283,9 +275,15 @@ static void DarwinProcess_updateCmdLine(const struct kinfo_proc* k, Process* pro
 
    Process_updateCmdline(proc, sp, 0, end);
 
+   /* Clean up. */
+   free(procargs);
+
    return;
 
 ERROR:
+   if (procargs) {
+      free(procargs);
+   }
    Process_updateCmdline(proc, k->kp_proc.p_comm, 0, strlen(k->kp_proc.p_comm));
 }
 
