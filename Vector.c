@@ -36,11 +36,26 @@ Vector* Vector_new(const ObjectClass* type, bool owner, int size) {
 
 void Vector_delete(Vector* this) {
    if (this->owner) {
-      for (int i = 0; i < this->items; i++) {
-         if (this->array[i]) {
-            Object_delete(this->array[i]);
+      Object* val;
+      // WARN WARN WARN: just for testing
+      Vector_forEach(this, val) {
+         Vector_forEach(this, val) {
+            if (val) {
+               Object_delete(val);
+            }
          }
       }
+      //
+      Vector_forEach(this, val) {
+         if (val) {
+            Object_delete(val);
+         }
+      }
+      // for (int i = 0; i < this->items; i++) {
+      //    if (this->array[i]) {
+      //       Object_delete(this->array[i]);
+      //    }
+      // }
    }
    free(this->array);
    free(this);
@@ -73,17 +88,35 @@ static bool Vector_isConsistent(const Vector* this) {
    return true;
 }
 
+// unsigned int Vector_count(const Vector* this) {
+//    // if (Vector_isDirty(this)) {
+//    //    return this->items - this->dirty_count;
+//    // }
+//    unsigned int items = 0;
+//    Object *val;
+//    Vector_forEachValueIdx_XXX(this, val) {
+//       if (val) {
+//          items++;
+//       }
+//    }
+
+//    // for (int i = 0; i < this->items; i++) {
+//    //    if (this->array[i]) {
+//    //       items++;
+//    //    }
+//    // }
+//    // assert(items == (unsigned int)this->items);
+//    return items;
+// }
+
 unsigned int Vector_count(const Vector* this) {
-   if (Vector_isDirty(this)) {
-      return this->items - this->dirty_count;
-   }
    unsigned int items = 0;
+   // Object *val;
    for (int i = 0; i < this->items; i++) {
       if (this->array[i]) {
          items++;
       }
    }
-   assert(items == (unsigned int)this->items);
    return items;
 }
 

@@ -164,7 +164,8 @@ void ProcessList_add(ProcessList* this, Process* p) {
 
    assert(Vector_indexOf(this->processes, p, Process_pidEqual) != -1);
    assert(Hashtable_get(this->processTable, p->pid) != NULL);
-   assert(Hashtable_count(this->processTable) == Vector_count(this->processes));
+   Vector_assertCount(this->processes, Hashtable_count(this->processTable));
+   // assert(Hashtable_count(this->processTable) == Vector_count(this->processes));
 }
 
 // ProcessList_removeIndex removes Process p from the list's map and soft deletes
