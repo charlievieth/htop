@@ -280,7 +280,7 @@ static void setCommFilter(State* state, char** commFilter) {
    IncSet* inc = state->mainPanel->inc;
 
    IncSet_setFilter(inc, *commFilter);
-   pl->incFilter = IncSet_filter(inc);
+   pl->incMode = IncSet_filterMode(inc);
 
    free(*commFilter);
    *commFilter = NULL;

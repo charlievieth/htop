@@ -18,6 +18,7 @@ in the source distribution for its full text.
 #include "Platform.h"
 #include "Vector.h"
 #include "XUtils.h"
+#include "IncSet.h"
 
 
 ProcessList* ProcessList_init(ProcessList* this, const ObjectClass* klass, UsersTable* usersTable, Hashtable* dynamicMeters, Hashtable* dynamicColumns, Hashtable* pidMatchList, uid_t userId) {
@@ -373,7 +374,7 @@ void ProcessList_collapseAllBranches(ProcessList* this) {
 void ProcessList_rebuildPanel(ProcessList* this) {
    ProcessList_updateDisplayList(this);
 
-   const char* incFilter = this->incFilter;
+   const IncMode* incMode = this->incMode;
 
    const int currPos = Panel_getSelectedIndex(this->panel);
    const int currScrollV = this->panel->scrollV;
@@ -399,7 +400,7 @@ void ProcessList_rebuildPanel(ProcessList* this) {
 
       if ( (!p->show)
          || (this->userId != (uid_t) -1 && (p->st_uid != this->userId))
-         || (incFilter && !(String_contains_i(Process_getCommand(p), incFilter, true)))
+         || (incMode && !IncMode_match(incMode, Process_getCommand(p)))
          || (this->pidMatchList && !Hashtable_get(this->pidMatchList, p->tgid)) )
          continue;
 

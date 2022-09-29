@@ -23,6 +23,7 @@ in the source distribution for its full text.
 #include "Settings.h"
 #include "UsersTable.h"
 #include "Vector.h"
+#include "IncSet.h"
 
 #ifdef HAVE_LIBHWLOC
 #include <hwloc.h>
@@ -61,7 +62,7 @@ typedef struct ProcessList_ {
    Panel* panel;
    int following;
    uid_t userId;
-   const char* incFilter;
+   const IncMode* incMode;
    Hashtable* pidMatchList;
 
    #ifdef HAVE_LIBHWLOC

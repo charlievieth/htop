@@ -498,6 +498,7 @@ AC_DEFINE_UNQUOTED([OSRELEASEFILE], ["$with_os_release"], [File with OS release 
 # Checks for Linux features and flags.
 # ----------------------------------------------------------------------
 
+# HERE
 AC_ARG_WITH([proc],
             [AS_HELP_STRING([--with-proc=DIR],
                             [location of a Linux-compatible proc filesystem @<:@default=/proc@:>@])],
@@ -507,6 +508,108 @@ if test -z "$with_proc"; then
    AC_MSG_ERROR([bad empty value for --with-proc option])
 fi
 AC_DEFINE_UNQUOTED([PROCDIR], ["$with_proc"], [Path of proc filesystem.])
+
+
+# WARN: delete this
+AC_DEFUN([gl_FUNC_PCRE],
+[
+  AC_ARG_ENABLE([perl-regexp],
+    AS_HELP_STRING([--disable-perl-regexp],
+                   [disable perl-regexp (PCRE) support]),
+    [case $enableval in
+       yes|no) test_pcre=$enableval;;
+       *) AC_MSG_ERROR([invalid value $enableval for --disable-perl-regexp]);;
+     esac],
+    [test_pcre=maybe])
+
+  AC_SUBST([PCRE_CFLAGS])
+  AC_SUBST([PCRE_LIBS])
+  use_pcre=no
+
+  if test $test_pcre != no; then
+    PKG_CHECK_MODULES([PCRE], [libpcre2-8], [], [: ${PCRE_LIBS=-lpcre2-8}])
+
+    AC_CACHE_CHECK([for pcre2_compile], [pcre_cv_have_pcre2_compile],
+      [pcre_saved_CFLAGS=$CFLAGS
+       pcre_saved_LIBS=$LIBS
+       CFLAGS="$CFLAGS $PCRE_CFLAGS"
+       LIBS="$PCRE_LIBS $LIBS"
+       AC_LINK_IFELSE(
+         [AC_LANG_PROGRAM([[#define PCRE2_CODE_UNIT_WIDTH 8
+                            #include <pcre2.h>
+                          ]],
+            [[pcre2_code *p = pcre2_compile (0, 0, 0, 0, 0, 0);
+              return !p;]])],
+         [pcre_cv_have_pcre2_compile=yes],
+         [pcre_cv_have_pcre2_compile=no])
+       CFLAGS=$pcre_saved_CFLAGS
+       LIBS=$pcre_saved_LIBS])
+
+    if test "$pcre_cv_have_pcre2_compile" = yes; then
+      use_pcre=yes
+    elif test $test_pcre = maybe; then
+      AC_MSG_WARN([AC_PACKAGE_NAME will be built without PCRE support.])
+    else
+      AC_MSG_ERROR([PCRE support not available])
+    fi
+  fi
+
+  if test $use_pcre = yes; then
+    AC_DEFINE([HAVE_LIBPCRE], [1],
+      [Define to 1 if you have the Perl Compatible Regular Expressions
+       library.])
+  else
+    PCRE_CFLAGS=
+    PCRE_LIBS=
+  fi
+])
+
+# gl_FUNC_PCRE
+# AM_CONDITIONAL([USE_PCRE], [test $use_pcre = yes])
+
+
+# TODO: move this
+# AC_ARG_ENABLE([pcre2],
+#               [AS_HELP_STRING([--enable-pcre2],
+#                               [enable pcre2 support @<:@default=yes@:>@])],
+#               [],
+#               [enable_pcre2=no])
+# if test "x$enable_pcre2" = xyes; then
+#    AC_DEFINE([HAVE_PCRE2], [1], [Define if pcre2 support enabled.])
+#    AC_DEFINE([PCRE2_CODE_UNIT_WIDTH], [8], [Define pcre2 code width.])
+# fi
+
+AC_ARG_ENABLE([pcre2],
+              [AS_HELP_STRING([--enable-pcre2],
+                              [enable pcre2 support @<:@default=yes@:>@])],
+              [],
+              [enable_pcre2=yes])
+case "$enable_pcre2" in
+   no)
+      ;;
+   yes)
+      m4_ifdef([PKG_PROG_PKG_CONFIG], [
+         PKG_PROG_PKG_CONFIG()
+         PKG_CHECK_MODULES([PCRE], [libpcre2-8], [], [: ${PCRE_LIBS=-lpcre2-8}])
+         PKG_CHECK_MODULES(PCRE, pcre2, [
+               CFLAGS="$CFLAGS $PCRE_CFLAGS" LIBS="$LIBS $PCRE_LIBS"
+            ], [
+               AC_CHECK_LIB([pcre2], [pcre2_compile], [], [AC_MSG_ERROR([can not find required library libpcre2])])
+               AC_CHECK_HEADERS([pcre2.h], [], [AC_MSG_ERROR([can not find require header file pcre2.h])])
+            ])
+         ], [
+            AC_CHECK_LIB([pcre2], [pcre2_compile], [], [AC_MSG_ERROR([can not find required library libpcre2])])
+            AC_CHECK_HEADERS([pcre2.h], [], [AC_MSG_ERROR([can not find require header file pcre2.h])])
+         ])
+         if test "$enable_pcre2" = yes; then
+            AC_DEFINE([HAVE_PCRE], [1], [Define if pcre2 support should be enabled.])
+         fi
+      ;;
+   *)
+      AC_MSG_ERROR([bad value '$enable_pcre2' for --enable-pcre2])
+      ;;
+esac
+# PCRE2_CODE_UNIT_WIDTH
 
 
 AC_ARG_ENABLE([openvz],
@@ -774,4 +877,5 @@ AC_MSG_RESULT([
   hwloc:                     $enable_hwloc
   debug:                     $enable_debug
   static:                    $enable_static
+  pcre2:                     $enable_pcre2
 ])

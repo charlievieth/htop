@@ -261,7 +261,7 @@ static Htop_Reaction actionExpandOrCollapseAllBranches(State* st) {
 static Htop_Reaction actionIncFilter(State* st) {
    IncSet* inc = (st->mainPanel)->inc;
    IncSet_activate(inc, INC_FILTER, (Panel*)st->mainPanel);
-   st->pl->incFilter = IncSet_filter(inc);
+   st->pl->incMode = IncSet_filterMode(inc);
    return HTOP_REFRESH | HTOP_KEEP_FOLLOWING;
 }
 

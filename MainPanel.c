@@ -13,6 +13,7 @@ in the source distribution for its full text.
 
 #include "CRT.h"
 #include "FunctionBar.h"
+#include "IncSet.h"
 #include "Platform.h"
 #include "Process.h"
 #include "ProcessList.h"
@@ -98,7 +99,7 @@ static HandlerResult MainPanel_eventHandler(Panel* super, int ch) {
    } else if (ch != ERR && this->inc->active) {
       bool filterChanged = IncSet_handleKey(this->inc, ch, super, MainPanel_getValue, NULL);
       if (filterChanged) {
-         this->state->pl->incFilter = IncSet_filter(this->inc);
+         this->state->pl->incMode = IncSet_filterMode(this->inc);
          reaction = HTOP_REFRESH | HTOP_REDRAW_BAR;
       }
       if (this->inc->found) {
@@ -123,7 +124,7 @@ static HandlerResult MainPanel_eventHandler(Panel* super, int ch) {
    }
 
    if (reaction & HTOP_REDRAW_BAR) {
-      MainPanel_updateLabels(this, settings->ss->treeView, this->state->pl->incFilter);
+      MainPanel_updateLabels(this, settings->ss->treeView, this->state->pl->incMode != NULL);
    }
    if (reaction & HTOP_RESIZE) {
       result |= RESIZE;

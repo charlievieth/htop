@@ -12,6 +12,9 @@ in the source distribution for its full text.
 #include <ctype.h>
 #include <string.h>
 #include <stdlib.h>
+#include <assert.h>
+
+#include <pcre2.h>
 
 #include "CRT.h"
 #include "ListItem.h"
@@ -19,16 +22,28 @@ in the source distribution for its full text.
 #include "ProvideCurses.h"
 #include "XUtils.h"
 
+// WARN: remove if not used
+#define DEBUG_REGEX 0
+
+
+static void IncRegex_reset(IncRegex* re) {
+   if (re && re->code) {
+      pcre2_code_free(re->code);
+      re->code = NULL;
+   }
+}
 
 static void IncMode_reset(IncMode* mode) {
    mode->index = 0;
    mode->buffer[0] = 0;
+   IncRegex_reset(mode->re);
 }
 
 void IncSet_reset(IncSet* this, IncType type) {
    IncMode_reset(&this->modes[type]);
 }
 
+// TODO: this is only used in one location CommandLine.c
 void IncSet_setFilter(IncSet* this, const char* filter) {
    IncMode* mode = &this->modes[INC_FILTER];
    size_t len = String_safeStrncpy(mode->buffer, filter, sizeof(mode->buffer));
@@ -40,10 +55,70 @@ static const char* const searchFunctions[] = {"Next  ", "Prev   ", "Cancel ", " 
 static const char* const searchKeys[] = {"F3", "S-F3", "Esc", "  "};
 static const int searchEvents[] = {KEY_F(3), KEY_F(15), 27, ERR};
 
+static inline bool IncRegex_match(const IncRegex* re, const char *subject) {
+   const PCRE2_SPTR s = (const PCRE2_SPTR)subject;
+   int ret = pcre2_match(re->code, s, PCRE2_ZERO_TERMINATED,
+                         0, 0 /* options */, re->match_data, re->context);
+#if DEBUG_REGEX
+   CRT_debug("pcre2_match(\"%s\") = %d\n", subject, ret);
+#endif
+   if (ret > 0) {
+      return true;
+   }
+   if (ret <= 0 && ret != PCRE2_ERROR_NOMATCH) {
+      // WARN: error
+   }
+   return false;
+}
+
+static inline void IncRegex_delete(IncRegex* re) {
+   if (re) {
+      if (re->code) {
+         pcre2_code_free(re->code);
+      }
+      if (re->match_data) {
+         pcre2_match_data_free(re->match_data);
+      }
+      if (re->context) {
+         pcre2_match_context_free(re->context);
+      }
+      if (re->jit_stack) {
+         pcre2_jit_stack_free(re->jit_stack);
+      }
+#ifndef NDEBUG
+      *re = (IncRegex){ 0 };
+#endif
+      free(re);
+   }
+}
+
+static void IncMode_initRegex(IncMode* inc) {
+   inc->re = xCalloc(1, sizeof(IncRegex));
+}
+
+// WARN: move
+static inline bool IncMode_hasRe(const IncMode* this) {
+   return this->re != NULL && this->re->code != NULL;
+}
+
+// WARN: move
+bool IncMode_match(const IncMode* this, const char* str) {
+   return IncMode_hasRe(this) ? IncRegex_match(this->re, str) :
+      String_contains_i(str, this->buffer, true);
+}
+
+// WARN: move
+static bool IncSet_match(const IncSet* this, const char* str, IncType mode) {
+   assert(INC_SEARCH <= mode && mode <= INC_FILTER);
+   return IncMode_match(&this->modes[mode], str);
+}
+
+
 static inline void IncMode_initSearch(IncMode* search) {
    memset(search, 0, sizeof(IncMode));
    search->bar = FunctionBar_new(searchFunctions, searchKeys, searchEvents);
    search->isFilter = false;
+   IncMode_initRegex(search);
 }
 
 static const char* const filterFunctions[] = {"Done  ", "Clear ", " Filter: ", NULL};
@@ -54,10 +129,12 @@ static inline void IncMode_initFilter(IncMode* filter) {
    memset(filter, 0, sizeof(IncMode));
    filter->bar = FunctionBar_new(filterFunctions, filterKeys, filterEvents);
    filter->isFilter = true;
+   IncMode_initRegex(filter);
 }
 
 static inline void IncMode_done(IncMode* mode) {
    FunctionBar_delete(mode->bar);
+   IncRegex_delete(mode->re);
 }
 
 IncSet* IncSet_new(FunctionBar* bar) {
@@ -82,10 +159,11 @@ static void updateWeakPanel(const IncSet* this, Panel* panel, Vector* lines) {
    Panel_prune(panel);
    if (this->filtering) {
       int n = 0;
-      const char* incFilter = this->modes[INC_FILTER].buffer;
+      // const char* incFilter = this->modes[INC_FILTER].buffer;
       for (int i = 0; i < Vector_size(lines); i++) {
          ListItem* line = (ListItem*)Vector_get(lines, i);
-         if (String_contains_i(line->value, incFilter, true)) {
+         // if (String_contains_i(line->value, incFilter, true)) {
+         if (IncSet_match(this, line->value, INC_FILTER)) {
             Panel_add(panel, (Object*)line);
             if (selected == (Object*)line) {
                Panel_setSelected(panel, n);
@@ -108,7 +186,7 @@ static void updateWeakPanel(const IncSet* this, Panel* panel, Vector* lines) {
 static bool search(const IncSet* this, Panel* panel, IncMode_GetPanelValue getPanelValue) {
    int size = Panel_size(panel);
    for (int i = 0; i < size; i++) {
-      if (String_contains_i(getPanelValue(panel, i), this->active->buffer, true)) {
+      if (IncMode_match(this->active, getPanelValue(panel, i))) {
          Panel_setSelected(panel, i);
          return true;
       }
@@ -132,7 +210,9 @@ static void IncSet_deactivate(IncSet* this, Panel* panel) {
    FunctionBar_draw(this->defaultBar);
 }
 
-static bool IncMode_find(const IncMode* mode, Panel* panel, IncMode_GetPanelValue getPanelValue, int step) {
+static bool IncMode_find(const IncMode* mode, Panel* panel,
+   IncMode_GetPanelValue getPanelValue, int step) {
+
    int size = Panel_size(panel);
    int here = Panel_getSelectedIndex(panel);
    int i = here;
@@ -148,10 +228,105 @@ static bool IncMode_find(const IncMode* mode, Panel* panel, IncMode_GetPanelValu
          return false;
       }
 
-      if (String_contains_i(getPanelValue(panel, i), mode->buffer, true)) {
+      if (IncMode_match(mode, getPanelValue(panel, i))) {
          Panel_setSelected(panel, i);
          return true;
       }
+   }
+}
+
+static bool non_ascii(int ch) {
+   return !isascii(ch) || ch == '\033';
+}
+
+static bool has_non_ascii(const char *s) {
+   if (!s) {
+      return false;
+   }
+   int ch;
+   while ((ch = *s++) != '\0') {
+      if (non_ascii(ch)) {
+         return true;
+      }
+   }
+   return false;
+}
+
+static int IncRegex_initJitStack(IncRegex *re) {
+   assert(re && re->code);
+   if (!re->jit_stack) {
+      // The context should be NULL if the jit_stack is NULL.
+      assert(re->context == NULL);
+
+      re->context = pcre2_match_context_create(NULL);
+      re->jit_stack = pcre2_jit_stack_create(32*1024, 512*1024, NULL);
+      assert(re->context);
+      assert(re->jit_stack);
+      if (!re->jit_stack || !re->context) {
+         return 1;
+      }
+      // TODO: just check the jit_stack and bail on error
+      pcre2_jit_stack_assign(re->context, NULL, re->jit_stack);
+   }
+   return 0;
+}
+
+static inline bool has_meta(const char *s) {
+   return s[strcspn(s, "+.*?^$|{}[]()\\")] != '\0';
+}
+
+static void IncRegex_compile(IncRegex *re, const char *pattern) {
+   if (re->code) {
+      pcre2_code_free(re->code);
+      re->code = NULL;
+   }
+   // use strcasestr if the pattern is empty or is not a regex
+   if (!pattern || pattern[0] == '\0' || !has_meta(pattern)) {
+      return;
+   }
+
+   // TODO: check locale as well (see git/lib/localeinfo.c):
+   //    multibyte = MB_CUR_MAX > 1;
+   //
+   uint32_t options = PCRE2_CASELESS | PCRE2_MULTILINE;
+   if (has_non_ascii(pattern)) {
+      options |= PCRE2_UTF;
+   }
+
+   int errorcode = 0;
+   size_t erroffset = 0;
+   assert(re->code == NULL);
+   re->code = pcre2_compile((const unsigned char*)pattern,
+                            PCRE2_ZERO_TERMINATED, options, &errorcode,
+                            &erroffset, NULL);
+   if (!re->code) {
+      // WARN: handle
+      return;
+   }
+
+   uint32_t ovecsize = 0;
+   if (pcre2_pattern_info(re->code, PCRE2_INFO_CAPTURECOUNT, &ovecsize) != 0) {
+      assert(false); // WARN: handle error
+   }
+   ovecsize++;
+   if (ovecsize > re->match_data_ovecsize || re->match_data == NULL) {
+      if (re->match_data) {
+         pcre2_match_data_free(re->match_data);
+      }
+      re->match_data = pcre2_match_data_create(ovecsize, NULL);
+      re->match_data_ovecsize = ovecsize;
+      assert(re->match_data);
+   }
+
+   // Lazily initialize the jit stack and match context
+   if (IncRegex_initJitStack(re) != 0) {
+      // WARN: handle error
+      assert(false);
+   }
+   // TODO: check if JIT is available
+   if (pcre2_jit_compile(re->code, PCRE2_JIT_COMPLETE) != 0) {
+      // WARN: handle error
+      assert(false);
    }
 }
 
@@ -163,6 +338,7 @@ bool IncSet_handleKey(IncSet* this, int ch, Panel* panel, IncMode_GetPanelValue 
    int size = Panel_size(panel);
    bool filterChanged = false;
    bool doSearch = true;
+   int prev_index = mode->index;
    if (ch == KEY_F(3) || ch == KEY_F(15)) {
       if (size == 0)
          return true;
@@ -211,6 +387,10 @@ bool IncSet_handleKey(IncSet* this, int ch, Panel* panel, IncMode_GetPanelValue 
       }
       IncSet_deactivate(this, panel);
       doSearch = false;
+   }
+   if (prev_index != mode->index) {
+      // WARN: handle errors
+      IncRegex_compile(mode->re, mode->buffer);
    }
    if (doSearch) {
       this->found = search(this, panel, getPanelValue);
