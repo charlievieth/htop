@@ -1464,6 +1464,52 @@ if test "$enable_sensors" = yes || test "$my_htop_platform" = freebsd; then
    AC_DEFINE([BUILD_WITH_CPU_TEMP], [1], [Define if CPU temperature option should be enabled.])
 fi
 
+
+AC_ARG_ENABLE(
+   [pcre2],
+   [AS_HELP_STRING(
+      [--enable-pcre2],
+      [enable PCRE2 regular expression support for process filtering; requires libpcre2-8 @<:@default=check@:>@]
+   )],
+   [],
+   [enable_pcre2=check]
+)
+case "$enable_pcre2" in
+   no)
+      ;;
+   check)
+      enable_pcre2=yes
+      HTOP_PKG_CHECK_MODULES(PCRE2, libpcre2-8,
+         [
+            AM_CFLAGS="$AM_CFLAGS $PCRE2_CFLAGS"
+            LIBS="$LIBS $PCRE2_LIBS"
+         ],
+         [
+            AC_CHECK_LIB([pcre2-8], [pcre2_compile_8], [], [enable_pcre2=no])
+            AC_CHECK_HEADERS([pcre2.h], [], [enable_pcre2=no], [#define PCRE2_CODE_UNIT_WIDTH 8])
+         ]
+      )
+      ;;
+   yes)
+      HTOP_PKG_CHECK_MODULES(PCRE2, libpcre2-8,
+         [
+            AM_CFLAGS="$AM_CFLAGS $PCRE2_CFLAGS"
+            LIBS="$LIBS $PCRE2_LIBS"
+         ],
+         [
+            AC_CHECK_LIB([pcre2-8], [pcre2_compile_8], [], [AC_MSG_ERROR([can not find required library libpcre2-8])])
+            AC_CHECK_HEADERS([pcre2.h], [], [AC_MSG_ERROR([can not find required header file pcre2.h])], [#define PCRE2_CODE_UNIT_WIDTH 8])
+         ]
+      )
+      ;;
+   *)
+      AC_MSG_ERROR([bad value '$enable_pcre2' for --enable-pcre2])
+      ;;
+esac
+if test "$enable_pcre2" = yes; then
+   AC_DEFINE([HAVE_PCRE2], [1], [Define if PCRE2 support is enabled.])
+fi
+
 # ----------------------------------------------------------------------
 
 
@@ -1620,6 +1666,7 @@ AC_MSG_RESULT([
   affinity:                  $enable_affinity
   unwind:                    $enable_unwind
   hwloc:                     $enable_hwloc
+  pcre2:                     $enable_pcre2
   debug:                     $enable_debug
   static:                    $enable_static
 ])

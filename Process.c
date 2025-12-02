@@ -20,6 +20,11 @@ in the source distribution for its full text.
 #include <time.h>
 #include <sys/resource.h>
 
+#ifdef HAVE_PCRE2
+#define PCRE2_CODE_UNIT_WIDTH 8
+#include <pcre2.h>
+#endif
+
 #include "CRT.h"
 #include "Hashtable.h"
 #include "Machine.h"
@@ -851,6 +856,56 @@ bool Process_rowIsVisible(const Row* super, const Table* table) {
    return Process_isVisible(this, table->host->settings);
 }
 
+#ifdef HAVE_PCRE2
+/* Maximum PCRE2 pattern size */
+#define PCRE2_MAX_PATTERN_SIZE 255
+
+/* Check if string matches PCRE2 regex pattern (case-insensitive) */
+static bool Process_matchesPcre2(const char* str, const char* pattern) {
+   if (!str || !pattern)
+      return false;
+
+   size_t patternLen = strlen(pattern);
+   if (patternLen == 0 || patternLen > PCRE2_MAX_PATTERN_SIZE)
+      return false;
+
+   int errorcode;
+   PCRE2_SIZE erroroffset;
+   pcre2_code* re = pcre2_compile(
+      (PCRE2_SPTR)pattern,
+      PCRE2_ZERO_TERMINATED,
+      PCRE2_CASELESS,
+      &errorcode,
+      &erroroffset,
+      NULL
+   );
+
+   if (!re)
+      return false;
+
+   pcre2_match_data* match_data = pcre2_match_data_create_from_pattern(re, NULL);
+   if (!match_data) {
+      pcre2_code_free(re);
+      return false;
+   }
+
+   int rc = pcre2_match(
+      re,
+      (PCRE2_SPTR)str,
+      strlen(str),
+      0,
+      0,
+      match_data,
+      NULL
+   );
+
+   pcre2_match_data_free(match_data);
+   pcre2_code_free(re);
+
+   return rc >= 0;
+}
+#endif
+
 /* Test whether display must filter out this process (various mechanisms) */
 static bool Process_matchesFilter(const Process* this, const Table* table) {
    const Machine* host = table->host;
@@ -858,8 +913,21 @@ static bool Process_matchesFilter(const Process* this, const Table* table) {
       return true;
 
    const char* incFilter = table->incFilter;
-   if (incFilter && !String_contains_i(Process_getCommand(this), incFilter, true))
-      return true;
+   if (incFilter) {
+      const char* command = Process_getCommand(this);
+#ifdef HAVE_PCRE2
+      /* Check if filter starts with \\ for PCRE2 regex mode */
+      if (incFilter[0] == '\\' && incFilter[1] == '\\') {
+         const char* pattern = incFilter + 2;
+         if (!Process_matchesPcre2(command, pattern))
+            return true;
+      } else
+#endif
+      {
+         if (!String_contains_i(command, incFilter, true))
+            return true;
+      }
+   }
 
    const ProcessTable* pt = (const ProcessTable*) host->activeTable;
    assert(Object_isA((const Object*) pt, (const ObjectClass*) &ProcessTable_class));
