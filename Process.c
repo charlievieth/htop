@@ -860,47 +860,83 @@ bool Process_rowIsVisible(const Row* super, const Table* table) {
 /* Maximum PCRE2 pattern size */
 #define PCRE2_MAX_PATTERN_SIZE 255
 
+/* Cached PCRE2 regex state */
+static char cachedPattern[PCRE2_MAX_PATTERN_SIZE + 1] = "";
+static pcre2_code* cachedRe = NULL;
+static pcre2_match_data* cachedMatchData = NULL;
+static bool cachedPatternValid = false;
+
+/* Free cached PCRE2 resources */
+static void Process_freePcre2Cache(void) {
+   if (cachedMatchData) {
+      pcre2_match_data_free(cachedMatchData);
+      cachedMatchData = NULL;
+   }
+   if (cachedRe) {
+      pcre2_code_free(cachedRe);
+      cachedRe = NULL;
+   }
+   cachedPattern[0] = '\0';
+   cachedPatternValid = false;
+}
+
 /* Check if string matches PCRE2 regex pattern (case-insensitive) */
 static bool Process_matchesPcre2(const char* str, const char* pattern) {
    if (!str || !pattern)
-      return false;
+      return true;
 
    size_t patternLen = strlen(pattern);
    if (patternLen == 0 || patternLen > PCRE2_MAX_PATTERN_SIZE)
-      return false;
+      return true;
 
-   int errorcode;
-   PCRE2_SIZE erroroffset;
-   pcre2_code* re = pcre2_compile(
-      (PCRE2_SPTR)pattern,
-      PCRE2_ZERO_TERMINATED,
-      PCRE2_CASELESS,
-      &errorcode,
-      &erroroffset,
-      NULL
-   );
+   /* Check if we need to recompile the pattern */
+   if (!cachedRe || strcmp(cachedPattern, pattern) != 0) {
+      Process_freePcre2Cache();
 
-   if (!re)
-      return false;
+      int errorcode;
+      PCRE2_SIZE erroroffset;
+      cachedRe = pcre2_compile(
+         (PCRE2_SPTR)pattern,
+         PCRE2_ZERO_TERMINATED,
+         PCRE2_CASELESS,
+         &errorcode,
+         &erroroffset,
+         NULL
+      );
 
-   pcre2_match_data* match_data = pcre2_match_data_create_from_pattern(re, NULL);
-   if (!match_data) {
-      pcre2_code_free(re);
-      return false;
+      if (!cachedRe) {
+         /* Invalid regex - match everything */
+         cachedPatternValid = false;
+         String_safeStrncpy(cachedPattern, pattern, sizeof(cachedPattern));
+         return true;
+      }
+
+      cachedMatchData = pcre2_match_data_create_from_pattern(cachedRe, NULL);
+      if (!cachedMatchData) {
+         pcre2_code_free(cachedRe);
+         cachedRe = NULL;
+         cachedPatternValid = false;
+         String_safeStrncpy(cachedPattern, pattern, sizeof(cachedPattern));
+         return true;
+      }
+
+      String_safeStrncpy(cachedPattern, pattern, sizeof(cachedPattern));
+      cachedPatternValid = true;
    }
 
+   /* If pattern was invalid, match everything */
+   if (!cachedPatternValid)
+      return true;
+
    int rc = pcre2_match(
-      re,
+      cachedRe,
       (PCRE2_SPTR)str,
       strlen(str),
       0,
       0,
-      match_data,
+      cachedMatchData,
       NULL
    );
-
-   pcre2_match_data_free(match_data);
-   pcre2_code_free(re);
 
    return rc >= 0;
 }
