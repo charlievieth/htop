@@ -20,6 +20,11 @@ in the source distribution for its full text.
 #include <time.h>
 #include <sys/resource.h>
 
+#ifdef HAVE_PCRE2
+#define PCRE2_CODE_UNIT_WIDTH 8
+#include <pcre2.h>
+#endif
+
 #include "CRT.h"
 #include "Hashtable.h"
 #include "Machine.h"
@@ -851,6 +856,92 @@ bool Process_rowIsVisible(const Row* super, const Table* table) {
    return Process_isVisible(this, table->host->settings);
 }
 
+#ifdef HAVE_PCRE2
+/* Maximum PCRE2 pattern size */
+#define PCRE2_MAX_PATTERN_SIZE 255
+
+/* Cached PCRE2 regex state */
+static char cachedPattern[PCRE2_MAX_PATTERN_SIZE + 1] = "";
+static pcre2_code* cachedRe = NULL;
+static pcre2_match_data* cachedMatchData = NULL;
+static bool cachedPatternValid = false;
+
+/* Free cached PCRE2 resources */
+static void Process_freePcre2Cache(void) {
+   if (cachedMatchData) {
+      pcre2_match_data_free(cachedMatchData);
+      cachedMatchData = NULL;
+   }
+   if (cachedRe) {
+      pcre2_code_free(cachedRe);
+      cachedRe = NULL;
+   }
+   cachedPattern[0] = '\0';
+   cachedPatternValid = false;
+}
+
+/* Check if string matches PCRE2 regex pattern (case-insensitive) */
+static bool Process_matchesPcre2(const char* str, const char* pattern) {
+   if (!str || !pattern)
+      return true;
+
+   size_t patternLen = strlen(pattern);
+   if (patternLen == 0 || patternLen > PCRE2_MAX_PATTERN_SIZE)
+      return true;
+
+   /* Check if we need to recompile the pattern */
+   if (!cachedRe || strcmp(cachedPattern, pattern) != 0) {
+      Process_freePcre2Cache();
+
+      int errorcode;
+      PCRE2_SIZE erroroffset;
+      cachedRe = pcre2_compile(
+         (PCRE2_SPTR)pattern,
+         PCRE2_ZERO_TERMINATED,
+         PCRE2_CASELESS,
+         &errorcode,
+         &erroroffset,
+         NULL
+      );
+
+      if (!cachedRe) {
+         /* Invalid regex - match everything */
+         cachedPatternValid = false;
+         String_safeStrncpy(cachedPattern, pattern, sizeof(cachedPattern));
+         return true;
+      }
+
+      cachedMatchData = pcre2_match_data_create_from_pattern(cachedRe, NULL);
+      if (!cachedMatchData) {
+         pcre2_code_free(cachedRe);
+         cachedRe = NULL;
+         cachedPatternValid = false;
+         String_safeStrncpy(cachedPattern, pattern, sizeof(cachedPattern));
+         return true;
+      }
+
+      String_safeStrncpy(cachedPattern, pattern, sizeof(cachedPattern));
+      cachedPatternValid = true;
+   }
+
+   /* If pattern was invalid, match everything */
+   if (!cachedPatternValid)
+      return true;
+
+   int rc = pcre2_match(
+      cachedRe,
+      (PCRE2_SPTR)str,
+      strlen(str),
+      0,
+      0,
+      cachedMatchData,
+      NULL
+   );
+
+   return rc >= 0;
+}
+#endif
+
 /* Test whether display must filter out this process (various mechanisms) */
 static bool Process_matchesFilter(const Process* this, const Table* table) {
    const Machine* host = table->host;
@@ -858,8 +949,21 @@ static bool Process_matchesFilter(const Process* this, const Table* table) {
       return true;
 
    const char* incFilter = table->incFilter;
-   if (incFilter && !String_contains_i(Process_getCommand(this), incFilter, true))
-      return true;
+   if (incFilter) {
+      const char* command = Process_getCommand(this);
+#ifdef HAVE_PCRE2
+      /* Check if filter starts with \\ for PCRE2 regex mode */
+      if (incFilter[0] == '\\' && incFilter[1] == '\\') {
+         const char* pattern = incFilter + 2;
+         if (!Process_matchesPcre2(command, pattern))
+            return true;
+      } else
+#endif
+      {
+         if (!String_contains_i(command, incFilter, true))
+            return true;
+      }
+   }
 
    const ProcessTable* pt = (const ProcessTable*) host->activeTable;
    assert(Object_isA((const Object*) pt, (const ObjectClass*) &ProcessTable_class));
